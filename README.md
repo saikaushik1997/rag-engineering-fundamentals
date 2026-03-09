@@ -8,9 +8,9 @@ End-to-end RAG pipeline implementation covering vector search with ChromaDB and 
 
 | Content | Description |
 |---|---|
-| `rag_chatbot/` | Basic RAG chatbot with streaming responses and LangSmith tracing |
-| `pinecone_demo/` | Pinecone index setup, metadata filtering, similarity search, and re-ranking |
-| `ragas_eval/` | RAGAS testset generation and evaluation pipeline |
+| `rag_chatbot` | Basic RAG chatbot with streaming responses and LangSmith tracing |
+| `pinecone_demo` | Pinecone index setup, metadata filtering, similarity search, and re-ranking |
+| `ragas_eval` | RAGAS testset generation and evaluation pipeline |
 
 ---
 
