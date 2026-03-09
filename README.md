@@ -6,7 +6,7 @@ End-to-end RAG pipeline implementation covering vector search with ChromaDB and 
 
 ## What's in here
 
-| File/Folder | Description |
+| Content | Description |
 |---|---|
 | `rag_chatbot/` | Basic RAG chatbot with streaming responses and LangSmith tracing |
 | `pinecone_demo/` | Pinecone index setup, metadata filtering, similarity search, and re-ranking |
