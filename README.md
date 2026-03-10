@@ -6,10 +6,11 @@ End-to-end RAG pipeline implementation covering vector search with ChromaDB and 
 
 ## What's in here
 
-| Content | Description |
+| File/Folder | Description |
 |---|---|
 | `rag_chatbot` | Basic RAG chatbot with streaming responses and LangSmith tracing |
 | `pinecone_demo` | Pinecone index setup, metadata filtering, similarity search, and re-ranking |
+| `hybrid_search_demo` | BM25 + dense vector hybrid search with alpha tuning and Cohere re-ranking |
 | `ragas_eval` | RAGAS testset generation and evaluation pipeline |
 
 ---
@@ -18,8 +19,9 @@ End-to-end RAG pipeline implementation covering vector search with ChromaDB and 
 
 - **LangChain** — RAG pipeline orchestration, LCEL chains, agent construction
 - **ChromaDB** — Local vector store with persistent storage
-- **Pinecone** — Cloud vector store with namespace isolation and metadata filtering
+- **Pinecone** — Cloud vector store with namespace isolation, metadata filtering, and hybrid search
 - **OpenAI** — Embeddings (`text-embedding-3-small`) and completions (`gpt-4o-mini`)
+- **Cohere** — Re-ranking with `rerank-english-v3`
 - **RAGAS** — Automated RAG evaluation: testset generation and metric scoring
 - **LangSmith** — Tracing and observability for LLM calls
 - **Jupyter Notebooks** — Exploratory evaluation work
@@ -80,6 +82,63 @@ Hard constraints (namespace, metadata) execute before probabilistic search. By t
 
 ---
 
+## Hybrid Search
+
+Combines dense (semantic) and sparse (BM25/keyword) retrieval in a single Pinecone serverless index. Each document is stored with both a dense vector and a sparse vector. At query time, Pinecone scores each document against both and combines them via a weighted sum controlled by `alpha`.
+
+```python
+index.query(
+    vector=[...],           # dense query vector (semantic)
+    sparse_vector={...},    # sparse query vector (BM25/keyword)
+    alpha=0.5,              # 0 = pure sparse, 1 = pure dense
+    top_k=20
+)
+```
+
+**Alpha controls the retrieval blend:**
+
+```
+alpha = 1.0  → pure dense  — best for conversational, semantic queries
+alpha = 0.0  → pure sparse — best for exact keyword/technical term queries
+alpha = 0.5  → balanced    — general purpose default
+```
+
+Alpha is applied before top-k selection — it determines which documents make it into the candidate set, not just how they are ordered afterward. A document with a weak dense score but strong keyword match can surface through hybrid that would be missed by dense-only search.
+
+**Pipeline with Cohere re-ranking:**
+
+```
+Dense search  ──┐
+                ├── alpha combines into unified ranked list (Pinecone internal)
+Sparse search ──┘
+                        │
+                        ▼
+                    top 20 candidates
+                        │
+                        ▼
+              Cohere rerank-english-v3    (cross-encoder, more thorough)
+                        │
+                        ▼
+                    top 3 results
+                        │
+                        ▼
+                       LLM
+```
+
+**Why two stages:** Alpha scoring is fast and approximate — it gets a good candidate set cheaply. The Cohere re-ranker is slower and more thorough. Applying it to top 20 rather than the full index keeps latency acceptable while improving final result quality.
+
+**Ablation results (RAGAS eval):**
+
+| Configuration | Context Precision | Context Recall | Faithfulness | Answer Relevancy |
+|---|---|---|---|---|
+| Dense only (baseline) | — | — | — | — |
+| Hybrid α=0.5 | — | — | — | — |
+| Hybrid α=0.5 + Cohere rerank | — | — | — | — |
+
+*Fill in after running RAGAS eval across configurations.*
+
+---
+
 ## RAGAS Evaluation
 
 Automated evaluation pipeline built on the RAGAS framework.
@@ -129,7 +188,7 @@ Low Answer Relevancy   → off-topic or padded responses, fix: prompt engineerin
 ```bash
 git clone https://github.com/saikaushik1997/rag-engineering-fundamentals.git
 cd rag-engineering-fundamentals
-pip install langchain langchain-openai chromadb pinecone-client ragas langsmith
+pip install langchain langchain-openai chromadb pinecone-client ragas langsmith cohere
 ```
 
 Set environment variables:
@@ -139,6 +198,7 @@ OPENAI_API_KEY=...
 PINECONE_API_KEY=...
 LANGCHAIN_API_KEY=...
 LANGCHAIN_TRACING_V2=true
+COHERE_API_KEY=...
 ```
 
 ---
@@ -189,6 +249,17 @@ LLM prompt constraint ("only answer from context") → soft, probabilistic, prom
 ```
 
 Hard constraints belong at the infrastructure level. Prompt-level constraints alone are insufficient.
+
+### Alpha in hybrid search determines what gets retrieved, not just how results are ordered
+
+An intuitive assumption is that alpha re-ranks an existing result set. It doesn't — alpha is applied before top-k selection, as part of the internal scoring that determines which documents make the candidate set in the first place. A document that scores poorly on dense similarity but strongly on keyword match can only surface through hybrid if alpha gives sparse scoring enough weight before retrieval, not after.
+
+This is distinct from re-ranking, which reorders an already-retrieved candidate set:
+
+```
+Alpha scoring   → determines which documents get retrieved (pre-selection)
+Re-ranker       → reorders the retrieved candidates (post-selection)
+```
 
 ### RAGAS evaluates whatever retriever you wire up — not a specific vector store
 
